@@ -8,7 +8,7 @@ import TodoList from './components/TodoList'
 import DeadlinePicker from './components/DeadlinePicker'
 import NotificationSetup from './components/NotificationSetup'
 import CalendarView from './components/CalendarView'
-import { useSpeechRecognition } from './hooks/useSpeechRecognition'
+import { useDeepgramSpeech } from './hooks/useDeepgramSpeech'
 import { useSpeechSynthesis, unlockTtsAudio } from './hooks/useSpeechSynthesis'
 import { useWakeWord } from './hooks/useWakeWord'
 import { parsePriority, parseDeadline, PRIORITY_LABELS, detectVoiceCommand, stripSaveCommand, detectNavCommand, stripCommandPhrases, detectQueryIntent, detectYesNo } from './lib/parseVoice'
@@ -88,7 +88,7 @@ export default function App() {
   const {
     isSupported: speechSupported, isListening, transcript, interimTranscript,
     error: speechError, start: startListening, stop: stopListening, reset: resetSpeech,
-  } = useSpeechRecognition({ onEnd: handleVoiceEnd })
+  } = useDeepgramSpeech({ onEnd: handleVoiceEnd })
 
   // refs 최신 상태 동기화 (handleVoiceEnd 클로저에서 사용)
   cmdStateRef.current = { isCommandMode, awaitingContinue, queryResult }
@@ -133,7 +133,7 @@ export default function App() {
   // ── 우선순위 · 마감일 자동 감지 + 명령어 구문 제거
   useEffect(() => {
     const fullText = transcript + interimTranscript
-    if (!fullText || !isListening || isManuallyEditing) return
+    if (!fullText || isManuallyEditing) return
     const dp = parsePriority(fullText)
     const dd = parseDeadline(fullText)
     if (dp || dd) {
@@ -142,7 +142,7 @@ export default function App() {
       // 기존 입력 내용에서 명령어 구문만 제거 (내용 보존)
       setEditableTranscript((prev) => stripCommandPhrases(prev))
     }
-  }, [transcript, interimTranscript, isListening, isManuallyEditing])
+  }, [transcript, interimTranscript, isManuallyEditing])
 
   // ── 모달 열릴 때 자동 음성 시작 (편집 모드 제외)
   useEffect(() => {
