@@ -52,7 +52,7 @@ export default function TodoItem({ todo, onVoiceEdit, onComplete }) {
         <button
           onClick={() => { toggleComplete(todo.id); if (!todo.is_completed) onComplete?.('완료'); else onComplete?.('복원') }}
           className={`
-            mt-0.5 w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center
+            mt-0.5 w-6 h-6 rounded-full border-2 flex-shrink-0 flex items-center justify-center
             transition-all duration-200
             ${todo.is_completed
               ? 'bg-indigo-500 border-indigo-500'
@@ -62,7 +62,7 @@ export default function TodoItem({ todo, onVoiceEdit, onComplete }) {
           aria-label={todo.is_completed ? '완료 취소' : '완료'}
         >
           {todo.is_completed && (
-            <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3.5} d="M5 13l4 4L19 7" />
             </svg>
           )}
@@ -103,7 +103,7 @@ export default function TodoItem({ todo, onVoiceEdit, onComplete }) {
             </div>
           ) : (
             <>
-              <p className={`text-[13.5px] font-medium leading-snug break-words ${
+              <p className={`text-[16px] font-medium leading-snug break-words ${
                 todo.is_completed ? 'line-through text-slate-400' : 'text-slate-800'
               }`}>
                 {todo.content}
@@ -137,10 +137,10 @@ export default function TodoItem({ todo, onVoiceEdit, onComplete }) {
           <div className="flex items-center gap-0.5 flex-shrink-0">
             <button
               onClick={() => { setEditContent(todo.content); setIsEditing(true) }}
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:text-sky-500 hover:bg-sky-50 transition-colors"
+              className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-300 hover:text-sky-500 hover:bg-sky-50 transition-colors"
               aria-label="수정"
             >
-              <svg className="w-[15px] h-[15px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                   d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
               </svg>
@@ -148,17 +148,17 @@ export default function TodoItem({ todo, onVoiceEdit, onComplete }) {
 
             <button
               onClick={handleDelete}
-              className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
+              className={`w-9 h-9 rounded-lg flex items-center justify-center transition-colors ${
                 showConfirm ? 'bg-red-500 text-white' : 'text-slate-300 hover:text-red-500 hover:bg-red-50'
               }`}
               aria-label={showConfirm ? '삭제 확인' : '삭제'}
             >
               {showConfirm ? (
-                <svg className="w-[15px] h-[15px]" fill="none" viewBox="0 0 24 24">
+                <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24">
                   <path d="M5 13l4 4L19 7" stroke="white" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               ) : (
-                <svg className="w-[15px] h-[15px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                     d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                 </svg>
