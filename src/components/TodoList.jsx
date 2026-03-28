@@ -70,7 +70,7 @@ export default function TodoList({ onVoiceEdit, onComplete, externalSearch, onSe
 
   return (
     <div className="flex flex-col gap-3">
-      {/* 검색 + 캘린더 */}
+      {/* 검색 + 정렬 */}
       <div className="flex gap-2">
         <div className="relative flex-1">
           <svg
@@ -85,7 +85,7 @@ export default function TodoList({ onVoiceEdit, onComplete, externalSearch, onSe
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="할일 검색..."
-            className="w-full pl-10 pr-9 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-transparent shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
+            className="w-full pl-10 pr-9 py-2.5 bg-white border border-slate-200 rounded-xl text-[15px] text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-transparent shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
           />
           {searchQuery && (
             <button
@@ -99,20 +99,48 @@ export default function TodoList({ onVoiceEdit, onComplete, externalSearch, onSe
           )}
         </div>
 
-        {/* 캘린더 버튼 */}
-        <button
-          onClick={onCalendarOpen}
-          className="w-[46px] h-[46px] flex-shrink-0 bg-indigo-500 hover:bg-indigo-600 active:scale-95 text-white rounded-xl flex items-center justify-center shadow-[0_2px_8px_rgba(99,102,241,0.35)] transition-all"
-          aria-label="캘린더 보기"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-              d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-          </svg>
-        </button>
+        {/* 정렬 드롭다운 */}
+        <div className="relative flex-shrink-0">
+          <button
+            onClick={() => setShowSortMenu((v) => !v)}
+            className="h-full flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 rounded-xl text-[13.5px] font-semibold text-slate-600 hover:border-indigo-300 hover:text-indigo-600 transition-colors shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5}
+                d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" />
+            </svg>
+            {currentSortLabel}
+          </button>
+
+          {showSortMenu && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setShowSortMenu(false)} />
+              <div className="absolute right-0 top-full mt-1.5 z-20 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden min-w-[130px]">
+                {SORT_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => { onSortChange?.(opt.value); setShowSortMenu(false) }}
+                    className={`w-full px-4 py-2.5 text-left text-[13.5px] font-semibold transition-colors flex items-center justify-between ${
+                      sortBy === opt.value
+                        ? 'bg-indigo-50 text-indigo-600'
+                        : 'text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {opt.label}
+                    {sortBy === opt.value && (
+                      <svg className="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                      </svg>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
-      {/* 필터 탭 + 정렬 */}
+      {/* 필터 탭 + 캘린더 */}
       <div className="flex items-center gap-2">
         <div className="flex bg-slate-100 rounded-xl p-1 gap-1 flex-1">
           {FILTERS.map(({ value, label, count }) => (
@@ -139,45 +167,17 @@ export default function TodoList({ onVoiceEdit, onComplete, externalSearch, onSe
           ))}
         </div>
 
-        {/* 정렬 드롭다운 */}
-        <div className="relative flex-shrink-0">
-          <button
-            onClick={() => setShowSortMenu((v) => !v)}
-            className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-600 hover:border-indigo-300 hover:text-indigo-600 transition-colors shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5}
-                d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" />
-            </svg>
-            {currentSortLabel}
-          </button>
-
-          {showSortMenu && (
-            <>
-              <div className="fixed inset-0 z-10" onClick={() => setShowSortMenu(false)} />
-              <div className="absolute right-0 top-full mt-1.5 z-20 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden min-w-[130px]">
-                {SORT_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    onClick={() => { onSortChange?.(opt.value); setShowSortMenu(false) }}
-                    className={`w-full px-4 py-2.5 text-left text-xs font-semibold transition-colors flex items-center justify-between ${
-                      sortBy === opt.value
-                        ? 'bg-indigo-50 text-indigo-600'
-                        : 'text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    {opt.label}
-                    {sortBy === opt.value && (
-                      <svg className="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                      </svg>
-                    )}
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
+        {/* 캘린더 버튼 */}
+        <button
+          onClick={onCalendarOpen}
+          className="w-[42px] h-[42px] flex-shrink-0 bg-indigo-500 hover:bg-indigo-600 active:scale-95 text-white rounded-xl flex items-center justify-center shadow-[0_2px_8px_rgba(99,102,241,0.35)] transition-all"
+          aria-label="캘린더 보기"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+        </button>
       </div>
 
       {/* 할일 목록 */}
