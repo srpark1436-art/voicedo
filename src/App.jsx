@@ -264,10 +264,10 @@ export default function App() {
     setTimeout(() => {
       window.speechSynthesis?.cancel() // 이중 cancel로 Chrome stuck 방지
       setTimeout(() => {
-        speak('무엇을 도와드릴까요?', { rate: 1.0, onEnd: () => setTimeout(tryStart, 100) })
+        speak('무엇을 도와드릴까요?', { rate: 1.0, onEnd: () => setTimeout(tryStart, 500) })
       }, 30)
     }, 30)
-    setTimeout(tryStart, 2000) // onEnd 미발화 fallback
+    setTimeout(tryStart, 3000) // onEnd 미발화 fallback (TTS 완전 종료 보장)
   }
 
   const exitCommandMode = () => {
@@ -445,8 +445,8 @@ export default function App() {
           didStartListen = true
           startListening() // start() 내부에서 transcript 초기화됨
         }
-        speak(msg, { onEnd: () => setTimeout(tryListen, 300) })
-        setTimeout(tryListen, 4000) // onEnd 미발화 fallback
+        speak(msg, { onEnd: () => setTimeout(tryListen, 500) })
+        setTimeout(tryListen, 5000) // onEnd 미발화 fallback (TTS 완전 종료 보장)
       }
       return
     }
