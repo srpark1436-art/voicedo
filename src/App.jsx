@@ -655,13 +655,13 @@ export default function App() {
         </div>
 
         {/* 로그인 버튼 (하단 고정) */}
-        <div className="relative z-[3] w-full max-w-[260px] pb-[6vh] animate-fade-up-2">
+        <div className="relative z-[3] w-full max-w-[320px] pb-[6vh] animate-fade-up-2">
           <button
             onClick={() => supabase.auth.signInWithOAuth({
               provider: 'google',
               options: { redirectTo: window.location.origin },
             })}
-            className="group relative w-full flex items-center justify-center gap-1.5 py-3 rounded-xl font-semibold text-[13px] text-white overflow-hidden active:scale-[0.97] transition-all duration-150"
+            className="group relative w-full flex items-center justify-center gap-2 py-4 rounded-xl font-semibold text-[16px] text-white overflow-hidden active:scale-[0.97] transition-all duration-150"
             style={{
               background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
               boxShadow: '0 4px 24px rgba(99,102,241,0.35), 0 0 0 1px rgba(165,180,252,0.15)',
