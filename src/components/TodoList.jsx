@@ -6,7 +6,7 @@ const SORT_OPTIONS = [
   { value: 'newest',   label: '최근 등록 순' },
   { value: 'oldest',   label: '과거 등록 순' },
   { value: 'deadline', label: '마감 빠른 순' },
-  { value: 'priority', label: '우선순위 높은 순' },
+  { value: 'priority', label: '우선순위 순' },
 ]
 
 const PRIORITY_ORDER = { high: 0, medium: 1, low: 2 }

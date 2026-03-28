@@ -253,11 +253,15 @@ export default function App() {
       didStart = true
       startListening()
     }
-    // 웨이크워드 인식 → TTS 전환 시 브라우저 오디오 안정화 대기
+    // TTS 강제 초기화 후 즉시 발화 (웨이크워드 인식 종료 후 오디오 충돌 방지)
+    window.speechSynthesis?.cancel()
     setTimeout(() => {
-      speak('무엇을 도와드릴까요?', { rate: 1.0, onEnd: () => setTimeout(tryStart, 150) })
-    }, 100)
-    setTimeout(tryStart, 2500) // onEnd 미발화 fallback
+      window.speechSynthesis?.cancel() // 이중 cancel로 Chrome stuck 방지
+      setTimeout(() => {
+        speak('무엇을 도와드릴까요?', { rate: 1.0, onEnd: () => setTimeout(tryStart, 100) })
+      }, 30)
+    }, 30)
+    setTimeout(tryStart, 2000) // onEnd 미발화 fallback
   }
 
   const exitCommandMode = () => {
