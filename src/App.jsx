@@ -255,7 +255,7 @@ export default function App() {
     }
     // 웨이크워드 인식 → TTS 전환 시 브라우저 오디오 안정화 대기
     setTimeout(() => {
-      speak('무엇을 도와드릴까요?', { rate: 1.2, onEnd: () => setTimeout(tryStart, 150) })
+      speak('무엇을 도와드릴까요?', { rate: 1.0, onEnd: () => setTimeout(tryStart, 150) })
     }, 100)
     setTimeout(tryStart, 2500) // onEnd 미발화 fallback
   }
