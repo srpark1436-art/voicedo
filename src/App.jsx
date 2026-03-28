@@ -54,6 +54,7 @@ export default function App() {
   const [isManuallyEditing, setIsManuallyEditing] = useState(false)
   const [voiceDetected, setVoiceDetected] = useState({ priority: false, deadline: false })
   const [voiceCmdFeedback, setVoiceCmdFeedback] = useState(null)
+  const speechRetryCountRef = useRef(0) // 음성 인식 재시도 횟수 제한
 
   // ── Google 로그인 후 사용자 정보 설정 + 할일 로드
   const handleAuthUser = useCallback(async (user) => {
@@ -147,14 +148,18 @@ export default function App() {
   // ── 모달 열릴 때 자동 음성 시작 (편집 모드 제외)
   useEffect(() => {
     if (!showVoiceModal || editingTodoId) return
+    speechRetryCountRef.current = 0 // 새 세션 시작 → 재시도 카운터 리셋
     const timer = setTimeout(() => startListening(), 300)
     return () => clearTimeout(timer)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showVoiceModal])
 
-  // ── 음성 인식 실패 시 재시도 안내 (음성 모달 + 커맨드 모드 공통)
+  // ── 음성 인식 실패 시 재시도 안내 (음성 모달 + 커맨드 모드 공통, 최대 2회)
   useEffect(() => {
     if (!speechError || speechError.includes('권한')) return
+    // 재시도 횟수 제한 — 무한루프 방지
+    if (speechRetryCountRef.current >= 2) return
+    speechRetryCountRef.current += 1
     let didRetry = false
     const tryRetry = () => {
       if (didRetry) return; didRetry = true
@@ -245,6 +250,7 @@ export default function App() {
   const startCommandMode = () => {
     cancelSpeech() // 기존 TTS 완전 정리
     resetSpeech()
+    speechRetryCountRef.current = 0 // 새 세션 시작 → 재시도 카운터 리셋
     setIsCommandMode(true)
     setCmdFeedback({ text: '무엇을 도와드릴까요?', type: 'listening' })
     let didStart = false

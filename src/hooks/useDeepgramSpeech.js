@@ -95,8 +95,8 @@ export function useDeepgramSpeech({ onResult, onEnd } = {}) {
       }
     } catch (err) {
       console.error('Deepgram STT error:', err)
-      setError(`음성 인식 오류: ${err.message}`)
-      hadErrorRef.current = true
+      // 세그먼트 전송 실패는 콘솔 경고만 (hook-level error 설정 시 App에서 무한 재시도 유발)
+      // 마이크 권한 등 치명적 에러만 setError로 전파
     } finally {
       setInterimTranscript('')
     }
@@ -173,6 +173,9 @@ export function useDeepgramSpeech({ onResult, onEnd } = {}) {
       setError('이 브라우저는 음성 인식을 지원하지 않습니다.')
       return
     }
+
+    // 이미 녹음 중이면 중복 시작 방지
+    if (isRecordingRef.current) return
 
     setError(null)
     setTranscript('')
