@@ -707,10 +707,10 @@ export default function App() {
                 setInputMode('text')
                 setShowVoiceModal(true)
               }}
-              className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors bg-slate-100 text-slate-500 hover:bg-indigo-50 hover:text-indigo-500"
+              className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors bg-indigo-50 text-indigo-500 hover:bg-indigo-100 hover:text-indigo-600"
               aria-label="할일 추가"
             >
-              <svg className="w-[16px] h-[16px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-[20px] h-[20px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
               </svg>
             </button>
@@ -718,12 +718,12 @@ export default function App() {
               onClick={() => setShowNotifBanner((v) => !v)}
               className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
                 showNotifBanner
-                  ? 'bg-indigo-100 text-indigo-600'
-                  : 'bg-slate-100 text-slate-500 hover:bg-indigo-50 hover:text-indigo-500'
+                  ? 'bg-amber-100 text-amber-600'
+                  : 'bg-amber-50 text-amber-500 hover:bg-amber-100 hover:text-amber-600'
               }`}
               aria-label="알림 설정"
             >
-              <svg className="w-[16px] h-[16px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-[20px] h-[20px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                   d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
               </svg>
@@ -793,7 +793,7 @@ export default function App() {
       {/* 완료 토스트 */}
       {toast && (
         <div className="fixed bottom-32 left-1/2 -translate-x-1/2 z-50 animate-fade-in">
-          <div className="flex items-center gap-2 px-5 py-3 bg-slate-900/90 backdrop-blur-sm text-white text-[13px] font-semibold rounded-xl shadow-xl">
+          <div className="flex items-center gap-2 px-5 py-3 bg-slate-900/90 backdrop-blur-sm text-white text-[13px] font-semibold rounded-xl shadow-xl whitespace-nowrap">
             <svg className="w-4 h-4 text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
             </svg>

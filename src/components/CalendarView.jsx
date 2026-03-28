@@ -17,7 +17,7 @@ const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토']
 
 export default function CalendarView({ onClose }) {
   const { todos } = useTodoStore()
-  const [viewMode, setViewMode] = useState('month')
+  const [viewMode, setViewMode] = useState('week')
   const [current, setCurrent] = useState(new Date())
   const [selectedDate, setSelectedDate] = useState(new Date())
 
