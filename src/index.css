@@ -7,6 +7,10 @@
     -webkit-tap-highlight-color: transparent;
   }
 
+  html {
+    font-size: 18px;
+  }
+
   body {
     @apply font-sans text-gray-900 antialiased;
     overscroll-behavior: none;
