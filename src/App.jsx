@@ -8,8 +8,7 @@ import TodoList from './components/TodoList'
 import DeadlinePicker from './components/DeadlinePicker'
 import NotificationSetup from './components/NotificationSetup'
 import CalendarView from './components/CalendarView'
-import { useDeepgramSpeech } from './hooks/useDeepgramSpeech'
-import { useSpeechSynthesis, unlockTtsAudio } from './hooks/useSpeechSynthesis'
+import { useGeminiLive } from './hooks/useGeminiLive'
 import { useWakeWord } from './hooks/useWakeWord'
 import { parsePriority, parseDeadline, PRIORITY_LABELS, detectVoiceCommand, stripSaveCommand, detectNavCommand, stripCommandPhrases, detectQueryIntent, detectYesNo } from './lib/parseVoice'
 import { cleanTodoContent } from './lib/cleanContent'
@@ -50,6 +49,8 @@ export default function App() {
   const [queryResult, setQueryResult] = useState(null) // { todos, message } — 조회 결과 확인 대기
   const [awaitingContinue, setAwaitingContinue] = useState(false) // 계속 여부 확인 대기
   const [inputMode, setInputMode] = useState('voice') // 'voice' | 'text'
+  const textareaRef = useRef(null)
+  const modalContentRef = useRef(null)
   const [editableTranscript, setEditableTranscript] = useState('')
   const [isManuallyEditing, setIsManuallyEditing] = useState(false)
   const [voiceDetected, setVoiceDetected] = useState({ priority: false, deadline: false })
@@ -68,8 +69,6 @@ export default function App() {
   const modalStateRef = useRef({})
   modalStateRef.current = { editingTodoId, editableTranscript, deadline, priority, isManuallyEditing }
 
-  const { speak, cancel: cancelSpeech } = useSpeechSynthesis()
-
   // 인식 세션 자연 종료 시 커맨드 모드 재시작 관리
   const intentionalStopRef = useRef(false)   // 의도적 stopListening 표시
   const cmdStateRef = useRef({})             // 커맨드 모드 현재 상태 (렌더 시마다 갱신)
@@ -80,7 +79,6 @@ export default function App() {
     if (intentionalStopRef.current) { intentionalStopRef.current = false; return }
     const { isCommandMode: cmd } = cmdStateRef.current
     // 커맨드 모드에서 인식 세션이 자연 종료된 경우 → 조용히 재시작
-    // (startListening 내부에서 transcript 초기화됨, resetSpeech 호출 금지 — stop()→onend 연쇄 방지)
     if (cmd) {
       setTimeout(() => startListeningRef.current?.(), 500)
     }
@@ -89,7 +87,8 @@ export default function App() {
   const {
     isSupported: speechSupported, isListening, transcript, interimTranscript,
     error: speechError, start: startListening, stop: stopListening, reset: resetSpeech,
-  } = useDeepgramSpeech({ onEnd: handleVoiceEnd })
+    speak, cancel: cancelSpeech, isSpeaking,
+  } = useGeminiLive({ onEnd: handleVoiceEnd })
 
   // refs 최신 상태 동기화 (handleVoiceEnd 클로저에서 사용)
   cmdStateRef.current = { isCommandMode, awaitingContinue, queryResult }
@@ -101,19 +100,29 @@ export default function App() {
       setSession(session ?? null)
       if (session?.user) handleAuthUser(session.user)
       else clearUser()
+    }).catch((err) => {
+      console.warn('세션 확인 실패 (무시):', err)
+      setSession(null)
+      clearUser()
     })
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session ?? null)
-      if (session?.user) handleAuthUser(session.user)
-      else clearUser()
-    })
-    return () => subscription.unsubscribe()
+    let subscription
+    try {
+      const result = supabase.auth.onAuthStateChange((_event, session) => {
+        setSession(session ?? null)
+        if (session?.user) handleAuthUser(session.user)
+        else clearUser()
+      })
+      subscription = result.data.subscription
+    } catch (err) {
+      console.warn('Auth listener 설정 실패 (무시):', err)
+    }
+    return () => subscription?.unsubscribe()
   }, [handleAuthUser, clearUser])
 
-  // ── 첫 사용자 제스처에서 TTS 오디오 잠금 해제 (웨이크워드 경로 대응)
+  // ── 첫 사용자 제스처에서 AudioContext 잠금 해제 (Gemini 오디오 재생용)
   useEffect(() => {
     const unlock = () => {
-      unlockTtsAudio()
+      // AudioContext는 useGeminiLive 내부에서 lazy 생성 + resume 처리
       document.removeEventListener('touchstart', unlock)
       document.removeEventListener('click', unlock)
     }
@@ -145,12 +154,30 @@ export default function App() {
     }
   }, [transcript, interimTranscript, isManuallyEditing])
 
-  // ── 모달 열릴 때 자동 음성 시작 (편집 모드 제외)
+  // ── 모달 열릴 때 자동 음성 시작 + textarea 포커스 + 스크롤 초기화
   useEffect(() => {
-    if (!showVoiceModal || editingTodoId) return
+    if (!showVoiceModal) return
+    // 모달 스크롤 상단으로 초기화
+    setTimeout(() => modalContentRef.current?.scrollTo(0, 0), 50)
+    // textarea 포커스 (커서 표시) — 키보드로 viewport 줄어들 때도 상단 유지
+    const focusAndScroll = () => {
+      textareaRef.current?.focus()
+      // 모바일 키보드가 올라온 뒤 모달 상단으로 스크롤
+      setTimeout(() => modalContentRef.current?.scrollTo(0, 0), 300)
+    }
+    const focusTimer = setTimeout(focusAndScroll, 100)
+    // 모바일 키보드 올라올 때 모달 상단 유지
+    const handleViewportResize = () => {
+      setTimeout(() => modalContentRef.current?.scrollTo(0, 0), 50)
+    }
+    window.visualViewport?.addEventListener('resize', handleViewportResize)
+    if (editingTodoId) {
+      setTimeout(() => speak('수정할 내용을 말씀해주세요'), 200)
+      return () => { clearTimeout(focusTimer); window.visualViewport?.removeEventListener('resize', handleViewportResize) }
+    }
     speechRetryCountRef.current = 0 // 새 세션 시작 → 재시도 카운터 리셋
-    const timer = setTimeout(() => startListening(), 300)
-    return () => clearTimeout(timer)
+    const listenTimer = setTimeout(() => startListening(), 300)
+    return () => { clearTimeout(focusTimer); clearTimeout(listenTimer); window.visualViewport?.removeEventListener('resize', handleViewportResize) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showVoiceModal])
 
@@ -248,9 +275,9 @@ export default function App() {
 
   // ── 커맨드 모드: FAB 마이크 버튼 → 네비게이션 명령 대기
   const startCommandMode = () => {
-    cancelSpeech() // 기존 TTS 완전 정리
+    intentionalStopRef.current = true
     resetSpeech()
-    speechRetryCountRef.current = 0 // 새 세션 시작 → 재시도 카운터 리셋
+    speechRetryCountRef.current = 0
     setIsCommandMode(true)
     setCmdFeedback({ text: '무엇을 도와드릴까요?', type: 'listening' })
     let didStart = false
@@ -259,15 +286,9 @@ export default function App() {
       didStart = true
       startListening()
     }
-    // TTS 강제 초기화 후 즉시 발화 (웨이크워드 인식 종료 후 오디오 충돌 방지)
-    window.speechSynthesis?.cancel()
-    setTimeout(() => {
-      window.speechSynthesis?.cancel() // 이중 cancel로 Chrome stuck 방지
-      setTimeout(() => {
-        speak('무엇을 도와드릴까요?', { rate: 1.0, onEnd: () => setTimeout(tryStart, 500) })
-      }, 30)
-    }, 30)
-    setTimeout(tryStart, 3000) // onEnd 미발화 fallback (TTS 완전 종료 보장)
+    // speak()는 내부에서 cancel+resume을 처리하므로 별도 cancelSpeech 불필요
+    speak('무엇을 도와드릴까요?', { rate: 1.1, onEnd: () => setTimeout(tryStart, 150) })
+    setTimeout(tryStart, 2500) // onEnd 미발화 fallback
   }
 
   const exitCommandMode = () => {
@@ -290,11 +311,11 @@ export default function App() {
       resetSpeech() // 이전 transcript 초기화
       setAwaitingContinue(true)
       setCmdFeedback({ text: '확인할 내용이 더 있으신가요?', type: 'listening' })
-      setTimeout(() => startListening(), 200)
+      setTimeout(() => startListening(), 100)
     }
-    speak('확인할 내용이 더 있으신가요?', { rate: 1.0, onEnd: tryEnter })
+    speak('확인할 내용이 더 있으신가요?', { rate: 1.1, onEnd: tryEnter })
     setCmdFeedback({ text: '확인할 내용이 더 있으신가요?', type: 'done' })
-    setTimeout(tryEnter, 4000) // onEnd 미발화 fallback
+    setTimeout(tryEnter, 3000) // onEnd 미발화 fallback
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [speak, startListening, resetSpeech])
 
@@ -369,11 +390,11 @@ export default function App() {
             if (didContinue) return
             didContinue = true
             setCmdFeedback({ text: '무엇을 도와드릴까요?', type: 'listening' })
-            setTimeout(() => startListening(), 200)
+            setTimeout(() => startListening(), 100)
           }
-          speak('음성 명령을 계속해주세요', { rate: 1.0, onEnd: tryContinue })
+          speak('음성 명령을 계속해주세요', { rate: 1.1, onEnd: tryContinue })
           setCmdFeedback({ text: '음성 명령을 계속해주세요', type: 'done' })
-          setTimeout(tryContinue, 3000) // fallback
+          setTimeout(tryContinue, 2500) // fallback
         } else {
           speak('알겠습니다', { onEnd: () => exitCommandMode() })
           setCmdFeedback({ text: '알겠습니다', type: 'done' })
@@ -445,8 +466,8 @@ export default function App() {
           didStartListen = true
           startListening() // start() 내부에서 transcript 초기화됨
         }
-        speak(msg, { onEnd: () => setTimeout(tryListen, 500) })
-        setTimeout(tryListen, 5000) // onEnd 미발화 fallback (TTS 완전 종료 보장)
+        speak(msg, { rate: 1.1, onEnd: () => setTimeout(tryListen, 150) })
+        setTimeout(tryListen, 4000) // onEnd 미발화 fallback
       }
       return
     }
@@ -548,6 +569,8 @@ export default function App() {
       setDeadline(null); setPriority('medium'); setManualText('')
       setVoiceDetected({ priority: false, deadline: false })
       setVoiceCmdFeedback(null); setEditingTodoId(null)
+      setInputMode('voice')
+      speak('할일을 말씀해주세요')
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transcript, isCommandMode])
@@ -666,6 +689,30 @@ export default function App() {
 
         {/* 로그인 버튼 (하단 고정) */}
         <div className="relative z-[3] w-full max-w-[320px] pb-[6vh] animate-fade-up-2">
+          {/* 인앱 브라우저 감지 안내 */}
+          {/KAKAOTALK|NAVER|Instagram|FB_IAB|FBAN|Line|DaumApps|everytimeApp|SamsungBrowser\/\d.*Mobile VR/i.test(navigator.userAgent) && (
+            <div className="mb-4 px-4 py-3 bg-amber-500/20 border border-amber-400/30 rounded-xl backdrop-blur-sm">
+              <p className="text-[13px] text-amber-100 font-medium text-center leading-relaxed">
+                인앱 브라우저에서는 Google 로그인이 제한됩니다.
+              </p>
+              <button
+                onClick={() => {
+                  const url = window.location.href
+                  // Android: intent URL로 Chrome 열기
+                  if (/android/i.test(navigator.userAgent)) {
+                    window.location.href = `intent://${url.replace(/^https?:\/\//, '')}#Intent;scheme=https;package=com.android.chrome;end`
+                  } else {
+                    // iOS: 클립보드 복사 안내
+                    navigator.clipboard?.writeText(url)
+                    alert('링크가 복사되었습니다.\nSafari 또는 Chrome에서 붙여넣기 해주세요.')
+                  }
+                }}
+                className="mt-2 w-full py-2.5 bg-white/20 hover:bg-white/30 rounded-lg text-[13px] font-semibold text-white transition-colors"
+              >
+                {/android/i.test(navigator.userAgent) ? 'Chrome에서 열기' : '링크 복사하기'}
+              </button>
+            </div>
+          )}
           <button
             onClick={() => supabase.auth.signInWithOAuth({
               provider: 'google',
@@ -891,7 +938,7 @@ export default function App() {
             onClick={closeVoiceModal}
           />
 
-          <div className="relative w-full max-w-lg bg-white rounded-t-[28px] shadow-2xl animate-slide-up max-h-[92vh] overflow-y-auto">
+          <div ref={modalContentRef} className="relative w-full max-w-lg bg-white rounded-t-[28px] shadow-2xl animate-slide-up max-h-[92vh] overflow-y-auto">
             <div className="flex justify-center pt-3 pb-1">
               <div className="w-10 h-1 bg-slate-200 rounded-full" />
             </div>
@@ -951,6 +998,7 @@ export default function App() {
 
               {speechSupported && inputMode === 'text' ? (
                 <textarea
+                  ref={textareaRef}
                   value={manualText}
                   onChange={(e) => setManualText(e.target.value)}
                   placeholder="할일을 입력하세요"
@@ -962,6 +1010,7 @@ export default function App() {
                 <div className="space-y-3">
                   <div className="relative">
                     <textarea
+                      ref={textareaRef}
                       value={editableTranscript}
                       onChange={handleTranscriptEdit}
                       placeholder={isListening && !isManuallyEditing ? '말씀하세요...' : '내용을 입력하거나 마이크를 누르세요'}
