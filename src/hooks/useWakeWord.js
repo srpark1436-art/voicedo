@@ -48,9 +48,8 @@ export function useWakeWord({ onWakeWord, enabled = true }) {
         for (let j = 0; j < event.results[i].length; j++) {
           const text = event.results[i][j].transcript
           if (WAKE_PATTERN.test(text)) {
-            // 웨이크워드 인식 완전 종료 후 콜백
             stop()
-            setTimeout(() => onWakeWordRef.current?.(), 150)
+            setTimeout(() => onWakeWordRef.current?.(), 80)
             return
           }
         }
