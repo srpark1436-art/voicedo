@@ -152,9 +152,10 @@ export function useGeminiLive({ onEnd } = {}) {
         }))
       }
 
-      ws.onmessage = (event) => {
+      ws.onmessage = async (event) => {
         try {
-          const msg = JSON.parse(event.data)
+          const text = event.data instanceof Blob ? await event.data.text() : event.data
+          const msg = JSON.parse(text)
           handleServerMessage(msg)
         } catch (e) {
           console.error('[Gemini WS] 메시지 파싱 오류:', e)
