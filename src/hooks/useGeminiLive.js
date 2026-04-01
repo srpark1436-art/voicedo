@@ -2,7 +2,6 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { AudioPlaybackManager } from '../audio/audioPlayback'
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 const TOKEN_URL = `${SUPABASE_URL}/functions/v1/gemini-token`
 
 const GEMINI_WS_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent'
@@ -40,9 +39,7 @@ let cachedApiKey = null
 
 async function fetchApiKey() {
   if (cachedApiKey) return cachedApiKey
-  const res = await fetch(TOKEN_URL, {
-    headers: { 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` },
-  })
+  const res = await fetch(TOKEN_URL)
   if (!res.ok) throw new Error(`Token fetch failed: ${res.status}`)
   const data = await res.json()
   if (!data.key) throw new Error('No API key returned')
