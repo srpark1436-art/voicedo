@@ -50,7 +50,7 @@ export const useTodoStore = create(
       },
 
       // 할일 추가
-      addTodo: async ({ content, deadline, priority = 'medium' }) => {
+      addTodo: async ({ content, deadline, deadline_time, priority = 'medium' }) => {
         const { username, userId, todos } = get()
         if (!username || !content.trim()) return null
 
@@ -59,6 +59,7 @@ export const useTodoStore = create(
           username,
           content: content.trim(),
           deadline: deadline || null,
+          deadline_time: deadline_time || null,
           priority,
           is_completed: false,
           created_at: new Date().toISOString(),
@@ -134,6 +135,22 @@ export const useTodoStore = create(
         if (error) {
           set({ todos: get().todos.concat(todos.find((t) => t.id === id)) })
           console.error('할일 삭제 실패:', error)
+        }
+      },
+
+      // 할일 알림 설정
+      setReminder: async (id, reminderAt) => {
+        const { todos, userId } = get()
+        const original = todos.find((t) => t.id === id)
+        set({ todos: todos.map((t) => (t.id === id ? { ...t, reminder_at: reminderAt } : t)) })
+        const { error } = await supabase
+          .from('todos')
+          .update({ reminder_at: reminderAt })
+          .eq('id', id)
+          .eq('user_id', userId)
+        if (error) {
+          set({ todos: get().todos.map((t) => (t.id === id ? original : t)) })
+          console.error('알림 설정 실패:', error)
         }
       },
 

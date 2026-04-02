@@ -5,8 +5,8 @@ const SpeechRecognition =
     ? window.SpeechRecognition || window.webkitSpeechRecognition
     : null
 
-// 인식 패턴: "헬로 제니퍼", "Hello Jennifer", "하이 제니퍼", "안녕 제니퍼"
-const WAKE_PATTERN = /헬+로\s*제+니+퍼|hello\s*jen+i+fer|하이\s*제+니+퍼|안녕\s*제+니+퍼|hi\s*jen+i+fer/i
+// 인식 패턴: 다양한 변형 포함 (Web Speech가 한국어 모드에서 영어를 다양하게 인식)
+const WAKE_PATTERN = /헬+로\s*제+니+퍼|hello\s*jen+i+fer|하이\s*제+니+퍼|안녕\s*제+니+퍼|hi\s*jen+i+fer|혤+로\s*제+니|헐+로\s*제+니|헬+로\s*재+니|헬+로\s*쩨+니|헬+로\s*지+니|hell+o\s*gen|제+니+퍼/i
 
 /**
  * 항상-온 웨이크워드 감지 훅
@@ -39,17 +39,17 @@ export function useWakeWord({ onWakeWord, enabled = true }) {
 
     const recognition = new SpeechRecognition()
     recognition.lang = 'ko-KR'
-    recognition.continuous = false
-    recognition.interimResults = false
+    recognition.continuous = true       // 계속 듣기 (세션 끊김 최소화)
+    recognition.interimResults = true   // 중간 결과로 빠른 감지
     recognition.maxAlternatives = 5
 
     recognition.onresult = (event) => {
-      for (let i = 0; i < event.results.length; i++) {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
         for (let j = 0; j < event.results[i].length; j++) {
           const text = event.results[i][j].transcript
           if (WAKE_PATTERN.test(text)) {
             stop()
-            setTimeout(() => onWakeWordRef.current?.(), 80)
+            setTimeout(() => onWakeWordRef.current?.(), 50)
             return
           }
         }
@@ -57,16 +57,17 @@ export function useWakeWord({ onWakeWord, enabled = true }) {
     }
 
     recognition.onend = () => {
+      // continuous=true여도 브라우저가 종료할 수 있음 → 즉시 재시작
       if (enabledRef.current) {
-        restartTimerRef.current = setTimeout(start, 400)
+        restartTimerRef.current = setTimeout(start, 150)
       }
     }
 
     recognition.onerror = (e) => {
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') return
+      if (e.error === 'no-speech') return // 무음 → onend에서 재시작
       if (enabledRef.current) {
-        // aborted / network 오류 시 재시도
-        restartTimerRef.current = setTimeout(start, 1500)
+        restartTimerRef.current = setTimeout(start, 800)
       }
     }
 

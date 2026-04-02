@@ -96,6 +96,44 @@ export function parseDeadline(text) {
   return null
 }
 
+/**
+ * 텍스트에서 시간 키워드 감지
+ * @returns 'HH:mm' 형식 문자열 | null (감지 안됨)
+ * 예: "9시" → "09:00", "오후 3시 30분" → "15:30", "5시 반" → "05:00" or "17:00"
+ */
+export function parseDeadlineTime(text) {
+  // 오전/오후 + N시 (M분)
+  const ampmMatch = text.match(/(오전|오후|아침|저녁|밤)\s*(\d{1,2})\s*시\s*(?:(\d{1,2})\s*분|반)?/)
+  if (ampmMatch) {
+    const period = ampmMatch[1]
+    let h = parseInt(ampmMatch[2])
+    const m = ampmMatch[3] ? parseInt(ampmMatch[3]) : (text.includes('반') ? 30 : 0)
+    if ((period === '오후' || period === '저녁' || period === '밤') && h < 12) h += 12
+    if (period === '오전' || period === '아침') { if (h === 12) h = 0 }
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+  }
+
+  // N시 M분 / N시 반 (오전/오후 없이)
+  const timeMatch = text.match(/(\d{1,2})\s*시\s*(?:(\d{1,2})\s*분|반)/)
+  if (timeMatch) {
+    let h = parseInt(timeMatch[1])
+    const m = timeMatch[2] ? parseInt(timeMatch[2]) : 30 // "반"이면 30
+    // 1~6시는 오후로 추정 (업무 시간)
+    if (h >= 1 && h <= 6) h += 12
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+  }
+
+  // N시 단독 (분 없이)
+  const hourOnly = text.match(/(\d{1,2})\s*시(?!\s*\d)/)
+  if (hourOnly) {
+    let h = parseInt(hourOnly[1])
+    if (h >= 1 && h <= 6) h += 12 // 1~6시는 오후 추정
+    return `${String(h).padStart(2, '0')}:00`
+  }
+
+  return null
+}
+
 /** 감지된 항목의 레이블 */
 export const PRIORITY_LABELS = { high: '높음', medium: '보통', low: '낮음' }
 
@@ -124,13 +162,16 @@ export function stripCommandPhrases(text) {
   t = t.replace(/\s*(월|화|수|목|금|토|일)요일?(\s*(에는?|까지|에서))?\s*/g, '')
   // M월 D일 (조사 또는 단독)
   t = t.replace(/\s*\d{1,2}월\s*\d{1,2}일(\s*(에는?|까지|에서))?(\s*(마감|변경|수정|바꿔|설정)(\s*해\s*줘?)?)?/g, '')
+  // 시간 표현 제거
+  t = t.replace(/\s*(오전|오후|아침|저녁|밤)\s*\d{1,2}\s*시\s*(\d{1,2}\s*분|반)?(\s*(까지|에|에는))?/g, '')
+  t = t.replace(/\s*\d{1,2}\s*시\s*(\d{1,2}\s*분|반)?(\s*(까지|에|에는))?/g, '')
   // N일까지 / N일 후/뒤
   t = t.replace(/\s*\d{1,2}\s*일\s*(까지|후|뒤)/g, '')
   t = t.replace(/\s*\d+\s*일\s*(후|뒤)/g, '')
   t = t.replace(/\s*(마감일|날짜|마감)\s*(을|를|은|는|이|가)?\s*(오늘|내일|모레|이번\s*주|다음\s*주|\d{1,2}월\s*\d{1,2}일)?\s*(로|으로)?\s*(변경|설정|바꿔|수정)?\s*(해\s*줘?)?/g, '')
 
-  // 저장 명령어 제거 (stripSaveCommand와 동일)
-  t = t.replace(/\s*(저장해\s*줘?|저장하기|저장|확인|수정해\s*줘?|수정하기)\s*$/, '')
+  // 저장/수정/변경 명령어 제거
+  t = t.replace(/\s*(저장해\s*줘?|저장하기|저장|확인|수정해\s*줘?|수정하기|변경해\s*줘?|변경하기|변경|바꿔\s*줘?|바꾸기|바꿔|고쳐\s*줘?|업데이트해?\s*줘?|업데이트)\s*$/, '')
 
   // 목적절·어미 제거 — AI 전달 전 최대한 정리
   t = t.replace(/\s*할\s*수\s*있도록.*/g, '')
@@ -151,7 +192,7 @@ export function stripCommandPhrases(text) {
  */
 export function detectVoiceCommand(text) {
   const t = text.trim()
-  if (/저장해\s*줘?$|저장하기$|저장$|확인$|수정해\s*줘?$|수정하기$|수정$/.test(t)) return 'save'
+  if (/저장해\s*줘?$|저장하기$|저장$|확인$|수정해\s*줘?$|수정하기$|수정$|변경해\s*줘?$|변경하기$|변경$|바꿔\s*줘?$|바꾸기$|바꿔$|고쳐\s*줘?$|업데이트해?\s*줘?$|업데이트$/.test(t)) return 'save'
   if (/삭제해\s*줘?$|지워\s*줘?$|삭제하기$|삭제$/.test(t)) return 'delete'
   if (/취소$|닫기$|그만$/.test(t)) return 'cancel'
   if (/다시$|초기화(\s*시켜\s*줘?|\s*해\s*줘?)?$|리셋$/.test(t)) return 'reset'
@@ -162,7 +203,7 @@ export function detectVoiceCommand(text) {
  * 저장/수정 명령어 키워드를 텍스트 끝에서 제거
  */
 export function stripSaveCommand(text) {
-  return text.replace(/\s*(저장해\s*줘?|저장하기|저장|확인|수정해\s*줘?|수정하기|수정)\s*$/, '').trim()
+  return text.replace(/\s*(저장해\s*줘?|저장하기|저장|확인|수정해\s*줘?|수정하기|수정|변경해\s*줘?|변경하기|변경|바꿔\s*줘?|바꾸기|바꿔|고쳐\s*줘?|업데이트해?\s*줘?|업데이트)\s*$/, '').trim()
 }
 
 /**
@@ -260,6 +301,44 @@ export function detectNavCommand(text) {
 
   // 취소
   if (/취소$|그만$|닫기$/.test(t)) return { cmd: 'cancel' }
+
+  // 알림 설정: "오늘 오후 5시에 디자인팀 업무 확인하기 알림 걸어줘"
+  const reminderMatch = t.match(/^(.+?)\s*(알림|알려|리마인더|리마인드)\s*(걸어\s*줘?|추가해?\s*줘?|등록해?\s*줘?|저장해?\s*줘?|설정해?\s*줘?|해\s*줘?|줘)$/)
+  if (reminderMatch) {
+    const body = reminderMatch[1].trim()
+    const date = parseDeadline(body)
+    const time = parseDeadlineTime(body)
+    // 날짜/시간 구문 제거 → 할일 내용만 추출
+    let content = body
+    content = content.replace(/(오늘|내일|모레)\s*/g, '')
+    content = content.replace(/(오전|오후|아침|저녁|밤)\s*\d{1,2}\s*시\s*(\d{1,2}\s*분|반)?\s*(에|까지)?\s*/g, '')
+    content = content.replace(/\d{1,2}\s*시\s*(\d{1,2}\s*분|반)?\s*(에|까지)?\s*/g, '')
+    content = content.replace(/\d{1,2}월\s*\d{1,2}일\s*(에|까지)?\s*/g, '')
+    content = content.replace(/(다음|이번)\s*주\s*(월|화|수|목|금|토|일)?(요일)?\s*(에|까지)?\s*/g, '')
+    content = content.replace(/(월|화|수|목|금|토|일)요일\s*(에|까지)?\s*/g, '')
+    content = content.replace(/\d+\s*일\s*(후|뒤)\s*/g, '')
+    content = content.trim()
+    return { cmd: 'set_reminder', content, date, time }
+  }
+
+  // 마감일/시간 변경: "마감일 내일 10시로 변경해줘", "XXX 마감일 다음주 월요일로 바꿔줘"
+  const deadlineChangeMatch = t.match(/^(.+?)\s*(마감일?|마감\s*일자|날짜|데드라인|기한)\s*(을|를)?\s*(.+?)\s*(으?로)?\s*(변경해?\s*줘?|바꿔\s*줘?|수정해?\s*줘?|설정해?\s*줘?|해\s*줘?)$/)
+  if (deadlineChangeMatch) {
+    const keyword = deadlineChangeMatch[1].trim()
+    const dateTimeStr = deadlineChangeMatch[4].trim()
+    const date = parseDeadline(dateTimeStr)
+    const time = parseDeadlineTime(dateTimeStr)
+    return { cmd: 'change_deadline', keyword, date, time }
+  }
+  // 역순: "내일 10시로 XXX 마감일 변경해줘"
+  const deadlineChangeMatch2 = t.match(/^(.+?)\s*(으?로)\s+(.+?)\s*(마감일?|마감\s*일자|날짜|데드라인|기한)\s*(을|를)?\s*(변경해?\s*줘?|바꿔\s*줘?|수정해?\s*줘?|설정해?\s*줘?|해\s*줘?)$/)
+  if (deadlineChangeMatch2) {
+    const dateTimeStr = deadlineChangeMatch2[1].trim()
+    const keyword = deadlineChangeMatch2[3].trim()
+    const date = parseDeadline(dateTimeStr)
+    const time = parseDeadlineTime(dateTimeStr)
+    return { cmd: 'change_deadline', keyword, date, time }
+  }
 
   // 할일 추가 ("할 일을 추가할게", "추가할게", "등록할게" 등 자연어 포함)
   if (/할\s*일\s*(을|를)?\s*(입력|추가|등록|만들|넣)|새\s*할\s*일|입력해\s*줘?$|추가해?\s*줘?$|등록해?\s*줘?$|추가할게|등록할게/.test(t)) return { cmd: 'add' }

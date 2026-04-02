@@ -8,15 +8,17 @@ import TodoList from './components/TodoList'
 import DeadlinePicker from './components/DeadlinePicker'
 import NotificationSetup from './components/NotificationSetup'
 import CalendarView from './components/CalendarView'
-import { useGeminiLive } from './hooks/useGeminiLive'
+import { useSpeechRecognition } from './hooks/useSpeechRecognition'
+import { useSpeechSynthesis, unlockTtsAudio } from './hooks/useSpeechSynthesis'
 import { useWakeWord } from './hooks/useWakeWord'
-import { parsePriority, parseDeadline, PRIORITY_LABELS, detectVoiceCommand, stripSaveCommand, detectNavCommand, stripCommandPhrases, detectQueryIntent, detectYesNo } from './lib/parseVoice'
+import { useReminderScheduler } from './hooks/useReminderScheduler'
+import { parsePriority, parseDeadline, parseDeadlineTime, PRIORITY_LABELS, detectVoiceCommand, stripSaveCommand, detectNavCommand, stripCommandPhrases, detectQueryIntent, detectYesNo } from './lib/parseVoice'
 import { cleanTodoContent } from './lib/cleanContent'
 
 export default function App() {
   const {
     setUsername, setUserId, fetchTodos, clearUser,
-    addTodo, updateTodo, deleteTodo, toggleComplete,
+    addTodo, updateTodo, deleteTodo, toggleComplete, setReminder,
     setVoiceEditTodoId,
   } = useTodoStore()
 
@@ -29,6 +31,7 @@ export default function App() {
   const [cmdFeedback, setCmdFeedback] = useState(null) // { text, type: 'listening'|'done'|'error' }
   const [externalSearch, setExternalSearch] = useState(undefined)
   const [deadline, setDeadline] = useState(null)
+  const [deadlineTime, setDeadlineTime] = useState(null) // 'HH:mm' | null
   const [priority, setPriority] = useState('medium')
   const [showNotifBanner, setShowNotifBanner] = useState(false)
   const [showCalendar, setShowCalendar] = useState(false)
@@ -67,7 +70,7 @@ export default function App() {
   }, [setUserId, setUsername, fetchTodos])
 
   const modalStateRef = useRef({})
-  modalStateRef.current = { editingTodoId, editableTranscript, deadline, priority, isManuallyEditing }
+  modalStateRef.current = { editingTodoId, editableTranscript, deadline, deadlineTime, priority, isManuallyEditing }
 
   // 인식 세션 자연 종료 시 커맨드 모드 재시작 관리
   const intentionalStopRef = useRef(false)   // 의도적 stopListening 표시
@@ -87,8 +90,60 @@ export default function App() {
   const {
     isSupported: speechSupported, isListening, transcript, interimTranscript,
     error: speechError, start: startListening, stop: stopListening, reset: resetSpeech,
-    speak, cancel: cancelSpeech, isSpeaking,
-  } = useGeminiLive({ onEnd: handleVoiceEnd })
+  } = useSpeechRecognition({ onEnd: handleVoiceEnd })
+
+  const { speak: rawSpeak, cancel: cancelSpeech } = useSpeechSynthesis()
+  const [isSpeaking, setIsSpeaking] = useState(false)
+  const ttsUnlockedRef = useRef(false)
+  const pendingSpeakRef = useRef(null)
+
+  // 첫 사용자 제스처에서 대기 중인 TTS 재생
+  useEffect(() => {
+    const unlockAndSpeak = () => {
+      unlockTtsAudio()
+      ttsUnlockedRef.current = true
+      if (pendingSpeakRef.current) {
+        const { text, options } = pendingSpeakRef.current
+        pendingSpeakRef.current = null
+        rawSpeak(text, options)
+      }
+      document.removeEventListener('touchstart', unlockAndSpeak)
+      document.removeEventListener('click', unlockAndSpeak)
+    }
+    document.addEventListener('touchstart', unlockAndSpeak, { once: true })
+    document.addEventListener('click', unlockAndSpeak, { once: true })
+    return () => {
+      document.removeEventListener('touchstart', unlockAndSpeak)
+      document.removeEventListener('click', unlockAndSpeak)
+    }
+  }, [rawSpeak])
+
+  const speak = useCallback((text, options = {}) => {
+    if (!text) return
+    const origOnEnd = options.onEnd
+    const wrappedOptions = {
+      ...options,
+      onEnd: () => { setIsSpeaking(false); origOnEnd?.() },
+    }
+    setIsSpeaking(true)
+
+    if (!ttsUnlockedRef.current) {
+      // TTS 잠금 상태 → 대기열에 저장 + 화면 탭 유도
+      pendingSpeakRef.current = { text, options: wrappedOptions }
+      showToastMsg('화면을 한번 터치하면 음성이 활성화됩니다')
+      // onEnd는 터치 후 자동 호출됨, 안전장치로 3초 후 강제 호출
+      setTimeout(() => {
+        if (pendingSpeakRef.current) {
+          pendingSpeakRef.current = null
+          setIsSpeaking(false)
+          origOnEnd?.()
+        }
+      }, 3000)
+      return
+    }
+
+    rawSpeak(text, wrappedOptions)
+  }, [rawSpeak, showToastMsg])
 
   // refs 최신 상태 동기화 (handleVoiceEnd 클로저에서 사용)
   cmdStateRef.current = { isCommandMode, awaitingContinue, queryResult }
@@ -119,21 +174,6 @@ export default function App() {
     return () => subscription?.unsubscribe()
   }, [handleAuthUser, clearUser])
 
-  // ── 첫 사용자 제스처에서 AudioContext 잠금 해제 (Gemini 오디오 재생용)
-  useEffect(() => {
-    const unlock = () => {
-      // AudioContext는 useGeminiLive 내부에서 lazy 생성 + resume 처리
-      document.removeEventListener('touchstart', unlock)
-      document.removeEventListener('click', unlock)
-    }
-    document.addEventListener('touchstart', unlock, { once: true })
-    document.addEventListener('click', unlock, { once: true })
-    return () => {
-      document.removeEventListener('touchstart', unlock)
-      document.removeEventListener('click', unlock)
-    }
-  }, [])
-
   // ── voice → editableTranscript 동기화
   useEffect(() => {
     if (isManuallyEditing) return
@@ -146,9 +186,11 @@ export default function App() {
     if (!fullText || isManuallyEditing) return
     const dp = parsePriority(fullText)
     const dd = parseDeadline(fullText)
-    if (dp || dd) {
+    const dt = parseDeadlineTime(fullText)
+    if (dp || dd || dt) {
       if (dp) { setPriority(dp); setVoiceDetected((v) => ({ ...v, priority: true })) }
       if (dd) { setDeadline(dd); setVoiceDetected((v) => ({ ...v, deadline: true })) }
+      if (dt) { setDeadlineTime(dt); setVoiceDetected((v) => ({ ...v, deadline: true })) }
       // 기존 입력 내용에서 명령어 구문만 제거 (내용 보존)
       setEditableTranscript((prev) => stripCommandPhrases(prev))
     }
@@ -172,11 +214,26 @@ export default function App() {
     }
     window.visualViewport?.addEventListener('resize', handleViewportResize)
     if (editingTodoId) {
-      setTimeout(() => speak('수정할 내용을 말씀해주세요'), 200)
+      speak('수정할 내용을 말씀해주세요', { onEnd: () => setTimeout(() => startListening(), 200) })
       return () => { clearTimeout(focusTimer); window.visualViewport?.removeEventListener('resize', handleViewportResize) }
     }
     speechRetryCountRef.current = 0 // 새 세션 시작 → 재시도 카운터 리셋
-    const listenTimer = setTimeout(() => startListening(), 300)
+    // TTS 재생 중이면 끝날 때까지 대기 후 인식 시작 (TTS 음성이 녹음되는 것 방지)
+    const waitAndListen = () => {
+      if (window.speechSynthesis?.speaking) {
+        const checkTimer = setInterval(() => {
+          if (!window.speechSynthesis.speaking) {
+            clearInterval(checkTimer)
+            setTimeout(() => startListening(), 200)
+          }
+        }, 100)
+        // 안전장치: 5초 후 강제 시작
+        setTimeout(() => { clearInterval(checkTimer); startListening() }, 5000)
+      } else {
+        setTimeout(() => startListening(), 300)
+      }
+    }
+    const listenTimer = setTimeout(waitAndListen, 100)
     return () => { clearTimeout(focusTimer); clearTimeout(listenTimer); window.visualViewport?.removeEventListener('resize', handleViewportResize) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showVoiceModal])
@@ -210,7 +267,7 @@ export default function App() {
     if (!transcript || !showVoiceModal) return
     const cmd = detectVoiceCommand(transcript.trim())
     if (!cmd) return
-    const { editingTodoId, editableTranscript, deadline, priority, isManuallyEditing } = modalStateRef.current
+    const { editingTodoId, editableTranscript, deadline, deadlineTime, priority, isManuallyEditing } = modalStateRef.current
     if (cmd === 'save') {
       const raw = isManuallyEditing ? editableTranscript : transcript.trim()
       const content = isManuallyEditing
@@ -222,17 +279,19 @@ export default function App() {
       const t = transcript.trim()
       const detectedPriority = parsePriority(t)
       const detectedDeadline = parseDeadline(t)
+      const detectedTime = parseDeadlineTime(t)
       const finalPriority = detectedPriority || priority
       const finalDeadline = detectedDeadline || deadline
+      const finalTime = detectedTime || deadlineTime
 
       stopListening(); setVoiceCmdFeedback('다듬는 중...')
       ;(async () => {
         const cleanedContent = await cleanTodoContent(content)
         if (editingTodoId) {
-          updateTodo(editingTodoId, { content: cleanedContent, deadline: finalDeadline, priority: finalPriority })
+          updateTodo(editingTodoId, { content: cleanedContent, deadline: finalDeadline, deadline_time: finalTime, priority: finalPriority })
           speak('수정했습니다')
         } else {
-          addTodo({ content: cleanedContent, deadline: finalDeadline, priority: finalPriority })
+          addTodo({ content: cleanedContent, deadline: finalDeadline, deadline_time: finalTime, priority: finalPriority })
           speak('저장했습니다')
         }
         setTimeout(() => closeVoiceModal(), 300)
@@ -301,6 +360,9 @@ export default function App() {
     enabled: !isCommandMode && !showVoiceModal && session !== null,
     onWakeWord: startCommandMode,
   })
+
+  // ── 로컬 알림 스케줄러 (앱 열려 있는 동안 동작)
+  useReminderScheduler()
 
   // 응답 후 "계속할지" 묻는 단계 진입 — 이전 TTS onEnd에서 호출
   const enterContinuePhase = useCallback(() => {
@@ -561,12 +623,73 @@ export default function App() {
       setTimeout(() => { setIsCommandMode(false); setCmdFeedback(null) }, 2000)
       return
     }
+    if (nav.cmd === 'set_reminder') {
+      intentionalStopRef.current = true; stopListening()
+      const { content, date, time } = nav
+      if (!content || !time) {
+        const msg = '알림 시간과 내용을 함께 말씀해주세요'
+        speak(msg, { onEnd: () => enterContinuePhase() })
+        setCmdFeedback({ text: msg, type: 'done' })
+        return
+      }
+      const reminderDate = date || format(new Date(), 'yyyy-MM-dd')
+      const reminderAt = new Date(`${reminderDate}T${time}:00`).toISOString()
+
+      // 기존 할일에서 내용 매칭 → 알림 설정, 없으면 새로 생성
+      const { todos } = useTodoStore.getState()
+      const matched = todos.find((t) => !t.is_completed && t.content.toLowerCase().includes(content.toLowerCase()))
+      if (matched) {
+        setReminder(matched.id, reminderAt)
+        const msg = `${content} 알림이 설정되었습니다`
+        speak(msg, { onEnd: () => enterContinuePhase() })
+        setCmdFeedback({ text: msg, type: 'done' })
+      } else {
+        // 새 할일 생성 + 알림
+        ;(async () => {
+          const newTodo = await addTodo({ content, deadline: reminderDate, deadline_time: time, priority: 'medium' })
+          if (newTodo?.id) setReminder(newTodo.id, reminderAt)
+          const msg = `${content} 할일과 알림이 추가되었습니다`
+          speak(msg, { onEnd: () => enterContinuePhase() })
+          setCmdFeedback({ text: msg, type: 'done' })
+        })()
+      }
+      return
+    }
+    if (nav.cmd === 'change_deadline') {
+      const { todos } = useTodoStore.getState()
+      const matched = todos.filter((t) => !t.is_completed && t.content.toLowerCase().includes(nav.keyword.toLowerCase()))
+      intentionalStopRef.current = true; stopListening()
+      if (matched.length === 0) {
+        const msg = '해당 할일을 찾을 수 없습니다'
+        speak(msg, { onEnd: () => enterContinuePhase() })
+        setCmdFeedback({ text: msg, type: 'done' })
+      } else {
+        const updates = {}
+        if (nav.date) updates.deadline = nav.date
+        if (nav.time) updates.deadline_time = nav.time
+        if (!nav.date && !nav.time) {
+          const msg = '변경할 날짜나 시간을 말씀해주세요'
+          speak(msg, { onEnd: () => enterContinuePhase() })
+          setCmdFeedback({ text: msg, type: 'done' })
+          return
+        }
+        matched.forEach((t) => updateTodo(t.id, updates))
+        const dateLabel = nav.date ? format(parseISO(nav.date), 'M월 d일', { locale: ko }) : ''
+        const timeLabel = nav.time || ''
+        const msg = matched.length === 1
+          ? `마감일이 ${dateLabel} ${timeLabel}으로 변경되었습니다`
+          : `${matched.length}개 할일의 마감일이 변경되었습니다`
+        speak(msg.trim(), { onEnd: () => enterContinuePhase() })
+        setCmdFeedback({ text: msg.trim(), type: 'done' })
+      }
+      return
+    }
     if (nav.cmd === 'add') {
       intentionalStopRef.current = true; stopListening(); resetSpeech()
       setIsCommandMode(false); setCmdFeedback(null)
       setShowVoiceModal(true)
       setEditableTranscript(''); setIsManuallyEditing(false)
-      setDeadline(null); setPriority('medium'); setManualText('')
+      setDeadline(null); setDeadlineTime(null); setPriority('medium'); setManualText('')
       setVoiceDetected({ priority: false, deadline: false })
       setVoiceCmdFeedback(null); setEditingTodoId(null)
       setInputMode('voice')
@@ -578,7 +701,7 @@ export default function App() {
   const openVoiceModal = () => {
     resetSpeech()
     setEditableTranscript(''); setIsManuallyEditing(false)
-    setDeadline(null); setPriority('medium'); setManualText('')
+    setDeadline(null); setDeadlineTime(null); setPriority('medium'); setManualText('')
     setVoiceDetected({ priority: false, deadline: false })
     setVoiceCmdFeedback(null); setEditingTodoId(null)
     setInputMode('voice')
@@ -758,7 +881,7 @@ export default function App() {
               onClick={() => {
                 resetSpeech()
                 setEditableTranscript(''); setIsManuallyEditing(false)
-                setDeadline(null); setPriority('medium'); setManualText('')
+                setDeadline(null); setDeadlineTime(null); setPriority('medium'); setManualText('')
                 setVoiceDetected({ priority: false, deadline: false })
                 setVoiceCmdFeedback(null); setEditingTodoId(null)
                 setInputMode('text')
@@ -1106,7 +1229,7 @@ export default function App() {
               </div>
 
               {/* 마감일 */}
-              <DeadlinePicker value={deadline} onChange={setDeadline} />
+              <DeadlinePicker value={deadline} onChange={setDeadline} timeValue={deadlineTime} onTimeChange={setDeadlineTime} />
 
               {/* 버튼 */}
               <div className="space-y-2.5 pt-1 pb-2">
