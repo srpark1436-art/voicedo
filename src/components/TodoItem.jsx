@@ -19,9 +19,16 @@ export default function TodoItem({ todo, onVoiceEdit, onComplete }) {
   const isOverdue = todo.deadline && !todo.is_completed && isPast(parseISO(todo.deadline + 'T23:59:59'))
   const isDueToday = todo.deadline && isToday(parseISO(todo.deadline))
 
-  const handleDelete = () => {
-    if (showConfirm) { deleteTodo(todo.id) }
-    else { setShowConfirm(true); setTimeout(() => setShowConfirm(false), 3000) }
+  const handleDelete = (e) => {
+    e.stopPropagation()
+    if (showConfirm) {
+      setShowConfirm(false)
+      // 클릭 이벤트가 아래 카드로 전파되지 않도록 지연 삭제
+      requestAnimationFrame(() => deleteTodo(todo.id))
+    } else {
+      setShowConfirm(true)
+      setTimeout(() => setShowConfirm(false), 3000)
+    }
   }
 
   const handleEditSave = async () => {

@@ -1,20 +1,50 @@
 import { useState, useRef, useCallback } from 'react'
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
-const EDGE_FN_URL = `${SUPABASE_URL}/functions/v1/deepgram-stt`
+const TOKEN_URL = `${SUPABASE_URL}/functions/v1/deepgram-token`
 
-// VAD 설정
-const SILENCE_THRESHOLD = 0.015   // RMS 이하 = 무음
-const SILENCE_DURATION = 1500     // 1.5초 무음 → 전송
-const MAX_RECORD_MS = 30000       // 최대 30초
-const VAD_INTERVAL = 100          // 100ms마다 체크
-const MAX_CONSECUTIVE_FAILURES = 3 // 연속 실패 허용 횟수
+const MAX_RECORD_MS = 30000 // 최대 30초
+
+// 브라우저별 지원 mimeType 감지
+function getSupportedMimeType() {
+  if (typeof MediaRecorder === 'undefined') return null
+  const types = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/mp4',
+    'audio/ogg;codecs=opus',
+  ]
+  for (const t of types) {
+    if (MediaRecorder.isTypeSupported(t)) return t
+  }
+  return null
+}
+
+// mimeType → Deepgram encoding 파라미터
+function getEncodingParam(mimeType) {
+  if (mimeType.includes('opus')) return 'opus'
+  if (mimeType.includes('mp4')) return 'aac'
+  if (mimeType.includes('ogg')) return 'opus'
+  return 'linear16'
+}
+
+// API 키 캐시 (세션 동안 재사용)
+let cachedApiKey = null
+
+async function fetchApiKey() {
+  if (cachedApiKey) return cachedApiKey
+  const res = await fetch(TOKEN_URL)
+  if (!res.ok) throw new Error(`Token fetch failed: ${res.status}`)
+  const data = await res.json()
+  if (!data.key) throw new Error('No API key returned')
+  cachedApiKey = data.key
+  return data.key
+}
 
 /**
- * Deepgram Nova-2 기반 음성 인식 훅
+ * Deepgram Nova-2 WebSocket 스트리밍 기반 음성 인식 훅
  * useSpeechRecognition과 동일한 인터페이스
- * MediaRecorder + VAD(Voice Activity Detection)으로 녹음 → Edge Function 경유 Deepgram 전송
+ * 브라우저 → Deepgram WebSocket 직접 연결 → 실시간 transcript
  */
 export function useDeepgramSpeech({ onResult, onEnd } = {}) {
   const [isListening, setIsListening] = useState(false)
@@ -22,48 +52,42 @@ export function useDeepgramSpeech({ onResult, onEnd } = {}) {
   const [interimTranscript, setInterimTranscript] = useState('')
   const [error, setError] = useState(null)
 
+  const wsRef = useRef(null)
   const mediaRecorderRef = useRef(null)
   const streamRef = useRef(null)
-  const audioCtxRef = useRef(null)
-  const analyserRef = useRef(null)
-  const vadTimerRef = useRef(null)
-  const silenceStartRef = useRef(null)
   const maxTimerRef = useRef(null)
-  const chunksRef = useRef([])
   const isRecordingRef = useRef(false)
   const hadErrorRef = useRef(false)
   const onEndRef = useRef(onEnd)
   onEndRef.current = onEnd
 
-  // 세션 ID — 비동기 cleanup이 새 세션을 파괴하지 않도록 보호
   const sessionIdRef = useRef(0)
-
-  // 음성 감지 플래그 — VAD에서 실제 소리가 감지된 세그먼트만 전송
-  const hadSpeechInSegmentRef = useRef(false)
-
-  // 연속 실패 카운터 — API 장애 시 무한 호출 방지
-  const consecutiveFailuresRef = useRef(0)
 
   const isSupported = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia
 
-  // 오디오 스트림 & 리소스 정리
   const cleanup = useCallback(() => {
-    clearInterval(vadTimerRef.current)
     clearTimeout(maxTimerRef.current)
-    vadTimerRef.current = null
     maxTimerRef.current = null
 
+    // MediaRecorder 정리
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       try { mediaRecorderRef.current.stop() } catch (_) {}
     }
     mediaRecorderRef.current = null
 
-    if (audioCtxRef.current) {
-      try { audioCtxRef.current.close() } catch (_) {}
-      audioCtxRef.current = null
+    // WebSocket 정리
+    if (wsRef.current) {
+      try {
+        if (wsRef.current.readyState === WebSocket.OPEN) {
+          // Deepgram에 스트림 종료 신호
+          wsRef.current.send(JSON.stringify({ type: 'CloseStream' }))
+        }
+        wsRef.current.close()
+      } catch (_) {}
+      wsRef.current = null
     }
-    analyserRef.current = null
 
+    // 마이크 스트림 정리
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(t => t.stop())
       streamRef.current = null
@@ -72,153 +96,33 @@ export function useDeepgramSpeech({ onResult, onEnd } = {}) {
     isRecordingRef.current = false
   }, [])
 
-  // 녹음된 오디오를 Edge Function에 전송
-  const sendAudio = useCallback(async (chunks) => {
-    if (!chunks.length) return
-
-    const blob = new Blob(chunks, { type: 'audio/webm;codecs=opus' })
-    // 너무 작은 오디오 무시 (노이즈만 잡힌 경우)
-    if (blob.size < 1000) return
-
-    // 연속 실패 한도 초과 시 전송 안 함
-    if (consecutiveFailuresRef.current >= MAX_CONSECUTIVE_FAILURES) return
-
-    setInterimTranscript('인식 중...')
-
-    try {
-      const res = await fetch(EDGE_FN_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'audio/webm',
-          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-        },
-        body: blob,
-      })
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}))
-        throw new Error(errData.error || `HTTP ${res.status}`)
-      }
-
-      const data = await res.json()
-      const text = data.transcript || ''
-
-      // 성공 → 실패 카운터 리셋
-      consecutiveFailuresRef.current = 0
-
-      if (text) {
-        setTranscript(prev => prev + (prev ? ' ' : '') + text)
-      }
-    } catch (err) {
-      console.error('Deepgram STT error:', err)
-      consecutiveFailuresRef.current += 1
-      if (consecutiveFailuresRef.current >= MAX_CONSECUTIVE_FAILURES) {
-        setError(`음성 인식 서버 연결 실패 (${err.message})`)
-        hadErrorRef.current = true
-      }
-    } finally {
-      setInterimTranscript('')
-    }
-  }, [])
-
-  // VAD: 주기적으로 볼륨 체크 → 무음 감지 시 녹음 세그먼트 전송
-  const startVAD = useCallback(() => {
-    const analyser = analyserRef.current
-    if (!analyser) return
-
-    const dataArray = new Float32Array(analyser.fftSize)
-    silenceStartRef.current = null
-    hadSpeechInSegmentRef.current = false
-
-    vadTimerRef.current = setInterval(() => {
-      analyser.getFloatTimeDomainData(dataArray)
-      // RMS 계산
-      let sum = 0
-      for (let i = 0; i < dataArray.length; i++) sum += dataArray[i] * dataArray[i]
-      const rms = Math.sqrt(sum / dataArray.length)
-
-      if (rms < SILENCE_THRESHOLD) {
-        // 무음 시작
-        if (!silenceStartRef.current) silenceStartRef.current = Date.now()
-        else if (Date.now() - silenceStartRef.current >= SILENCE_DURATION) {
-          // 1.5초 무음 → 음성이 있었던 세그먼트만 전송
-          silenceStartRef.current = null
-          if (hadSpeechInSegmentRef.current && mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-            hadSpeechInSegmentRef.current = false
-            mediaRecorderRef.current.stop() // onstop에서 sendAudio + 재시작
-          }
-        }
-      } else {
-        // 소리 감지 → 무음 타이머 리셋, 음성 플래그 설정
-        silenceStartRef.current = null
-        hadSpeechInSegmentRef.current = true
-        setInterimTranscript('듣고 있어요...')
-      }
-    }, VAD_INTERVAL)
-  }, [])
-
-  // MediaRecorder 세그먼트 시작
-  const startRecording = useCallback((stream) => {
-    if (!isRecordingRef.current) return
-
-    chunksRef.current = []
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus'
-      : 'audio/webm'
-
-    const recorder = new MediaRecorder(stream, { mimeType })
-
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunksRef.current.push(e.data)
-    }
-
-    recorder.onstop = async () => {
-      const chunks = [...chunksRef.current]
-      chunksRef.current = []
-
-      if (chunks.length > 0) {
-        await sendAudio(chunks)
-      }
-
-      // 아직 listening 중이면 다음 세그먼트 시작
-      if (isRecordingRef.current && streamRef.current) {
-        startRecording(streamRef.current)
-      }
-    }
-
-    mediaRecorderRef.current = recorder
-    recorder.start(250) // 250ms마다 chunk
-  }, [sendAudio])
-
   const start = useCallback(async () => {
     if (!isSupported) {
       setError('이 브라우저는 음성 인식을 지원하지 않습니다.')
       return
     }
 
-    // 이미 녹음 중이면 중복 시작 방지
     if (isRecordingRef.current) return
 
-    // 새 세션 ID 발급
     const mySession = ++sessionIdRef.current
 
     setError(null)
     setTranscript('')
     setInterimTranscript('')
     hadErrorRef.current = false
-    consecutiveFailuresRef.current = 0
     isRecordingRef.current = true
 
     try {
+      // 1. API 키 가져오기
+      const apiKey = await fetchApiKey()
+
+      if (sessionIdRef.current !== mySession) return
+
+      // 2. 마이크 스트림
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          sampleRate: 16000,
-        },
+        audio: { echoCancellation: true, noiseSuppression: true },
       })
 
-      // 세션이 바뀌었으면 (start 중간에 stop/reset 호출) → 스트림 정리 후 종료
       if (sessionIdRef.current !== mySession) {
         stream.getTracks().forEach(t => t.stop())
         return
@@ -226,89 +130,136 @@ export function useDeepgramSpeech({ onResult, onEnd } = {}) {
 
       streamRef.current = stream
 
-      // AudioContext + Analyser for VAD
-      const audioCtx = new (window.AudioContext || window.webkitAudioContext)()
-      const source = audioCtx.createMediaStreamSource(stream)
-      const analyser = audioCtx.createAnalyser()
-      analyser.fftSize = 2048
-      source.connect(analyser)
+      // 3. MediaRecorder 설정
+      const mimeType = getSupportedMimeType() || 'audio/webm'
+      let recorder
+      try {
+        recorder = new MediaRecorder(stream, { mimeType })
+      } catch (_) {
+        recorder = new MediaRecorder(stream)
+      }
 
-      audioCtxRef.current = audioCtx
-      analyserRef.current = analyser
+      // 4. Deepgram WebSocket 연결
+      const wsUrl = new URL('wss://api.deepgram.com/v1/listen')
+      wsUrl.searchParams.set('model', 'nova-2')
+      wsUrl.searchParams.set('language', 'ko')
+      wsUrl.searchParams.set('smart_format', 'true')
+      wsUrl.searchParams.set('interim_results', 'true')
+      wsUrl.searchParams.set('endpointing', '300')
+      wsUrl.searchParams.set('vad_events', 'true')
+      wsUrl.searchParams.set('encoding', getEncodingParam(mimeType))
 
-      setIsListening(true)
-      setInterimTranscript('듣고 있어요...')
+      const ws = new WebSocket(wsUrl.toString(), ['token', apiKey])
 
-      // 녹음 시작
-      startRecording(stream)
+      ws.onopen = () => {
+        console.log('[Deepgram WS] 연결됨')
+        setIsListening(true)
+        setInterimTranscript('듣고 있어요...')
 
-      // VAD 시작
-      startVAD()
+        // MediaRecorder → WebSocket으로 오디오 스트리밍
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+            ws.send(e.data)
+          }
+        }
 
-      // 최대 녹음 시간 제한
+        mediaRecorderRef.current = recorder
+        recorder.start(250) // 250ms마다 chunk 전송
+      }
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data)
+
+          if (msg.type === 'Results') {
+            const alt = msg.channel?.alternatives?.[0]
+            if (!alt) return
+
+            const text = alt.transcript || ''
+
+            if (msg.is_final) {
+              // 최종 결과 → transcript에 누적
+              if (text) {
+                setTranscript(prev => prev + (prev ? ' ' : '') + text)
+              }
+              setInterimTranscript('듣고 있어요...')
+            } else {
+              // 중간 결과 → interimTranscript에 표시
+              if (text) {
+                setInterimTranscript(text)
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
+      ws.onerror = (e) => {
+        console.error('[Deepgram WS] 에러:', e)
+        if (!hadErrorRef.current) {
+          setError('음성 인식 연결 오류')
+          hadErrorRef.current = true
+        }
+      }
+
+      ws.onclose = (e) => {
+        console.log('[Deepgram WS] 종료:', e.code, e.reason)
+        // 정상 종료가 아닌 경우에만 에러 처리
+        if (e.code !== 1000 && e.code !== 1005 && isRecordingRef.current) {
+          if (!hadErrorRef.current) {
+            setError('음성 인식 연결이 끊어졌습니다')
+            hadErrorRef.current = true
+          }
+        }
+      }
+
+      wsRef.current = ws
+
+      // 5. 최대 녹음 시간 제한
       maxTimerRef.current = setTimeout(() => {
         if (isRecordingRef.current && sessionIdRef.current === mySession) {
           isRecordingRef.current = false
-          if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-            mediaRecorderRef.current.stop()
-          }
           cleanup()
           setIsListening(false)
           setInterimTranscript('')
           if (!hadErrorRef.current) onEndRef.current?.()
         }
       }, MAX_RECORD_MS)
+
     } catch (err) {
+      console.error('[Deepgram] start 에러:', err)
       if (err.name === 'NotAllowedError') {
         setError('마이크 권한이 필요합니다. 브라우저 설정에서 허용해주세요.')
       } else {
-        setError(`마이크 접근 오류: ${err.message}`)
+        setError(`음성 인식 시작 오류: ${err.message}`)
       }
+      hadErrorRef.current = true
       isRecordingRef.current = false
       setIsListening(false)
     }
-  }, [isSupported, cleanup, startRecording, startVAD])
+  }, [isSupported, cleanup])
 
   const stop = useCallback(() => {
     const wasRecording = isRecordingRef.current
     isRecordingRef.current = false
 
-    // 세션 ID 증가 — 이전 비동기 작업이 새 세션에 영향 못 주도록
-    const stoppedSession = sessionIdRef.current
+    cleanup()
+    setIsListening(false)
+    setInterimTranscript('')
 
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      const recorder = mediaRecorderRef.current
-      recorder.onstop = async () => {
-        const chunks = [...chunksRef.current]
-        chunksRef.current = []
-        if (chunks.length > 0) await sendAudio(chunks)
-
-        // 새 세션이 시작되지 않았을 때만 cleanup + onEnd 호출
-        if (sessionIdRef.current === stoppedSession) {
-          cleanup()
-          setIsListening(false)
-          setInterimTranscript('')
-          if (!hadErrorRef.current) onEndRef.current?.()
-        }
-      }
-      recorder.stop()
-    } else {
-      cleanup()
-      setIsListening(false)
-      setInterimTranscript('')
-      if (wasRecording && !hadErrorRef.current) onEndRef.current?.()
+    if (wasRecording && !hadErrorRef.current) {
+      // WebSocket final 메시지 수신 대기 후 onEnd 호출
+      setTimeout(() => onEndRef.current?.(), 300)
     }
-  }, [cleanup, sendAudio])
+  }, [cleanup])
 
   const reset = useCallback(() => {
     isRecordingRef.current = false
-    sessionIdRef.current++ // 세션 무효화
+    sessionIdRef.current++
     cleanup()
     setTranscript('')
     setInterimTranscript('')
     setError(null)
     setIsListening(false)
-    consecutiveFailuresRef.current = 0
   }, [cleanup])
 
   return {

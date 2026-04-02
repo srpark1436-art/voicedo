@@ -100,14 +100,10 @@ export function useSpeechSynthesis() {
       window.speechSynthesis.speak(utter)
     }
 
-    // Chrome: cancel() 직후 speak() 무시 버그 방지
-    // 재생 중일 때만 cancel → 50ms 대기, 아니면 즉시 speak
-    if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
-      window.speechSynthesis.cancel()
-      setTimeout(doSpeak, 80)
-    } else {
-      doSpeak()
-    }
+    // Chrome 모바일 TTS stuck 버그 방지: 항상 cancel + resume 후 speak
+    window.speechSynthesis.cancel()
+    window.speechSynthesis.resume()
+    setTimeout(doSpeak, 30)
   }, [isSupported])
 
   const speak = useCallback((text, options = {}) => {

@@ -4,7 +4,7 @@ import { AudioPlaybackManager } from '../audio/audioPlayback'
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
 const TOKEN_URL = `${SUPABASE_URL}/functions/v1/gemini-token`
 
-const GEMINI_WS_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent'
+const GEMINI_WS_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent'
 const MODEL = 'models/gemini-3.1-flash-live-preview'
 
 const SYSTEM_INSTRUCTION = `당신은 한국어 할일 관리 도우미 '제니퍼'입니다.
@@ -156,6 +156,7 @@ export function useGeminiLive({ onEnd } = {}) {
         try {
           const text = event.data instanceof Blob ? await event.data.text() : event.data
           const msg = JSON.parse(text)
+          console.log('[Gemini WS] 수신:', JSON.stringify(msg).slice(0, 200))
           handleServerMessage(msg)
         } catch (e) {
           console.error('[Gemini WS] 메시지 파싱 오류:', e)
@@ -291,17 +292,21 @@ export function useGeminiLive({ onEnd } = {}) {
       const source = ctx.createMediaStreamSource(stream)
       const workletNode = new AudioWorkletNode(ctx, 'pcm-worklet-processor')
 
+      let audioSendCount = 0
       workletNode.port.onmessage = (event) => {
         const { pcmData } = event.data
         if (!pcmData || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
 
         const base64 = arrayBufferToBase64(pcmData)
+        if (audioSendCount++ < 3) {
+          console.log(`[Gemini] 오디오 전송 #${audioSendCount}, size=${pcmData.byteLength}, base64len=${base64.length}`)
+        }
         wsRef.current.send(JSON.stringify({
           realtime_input: {
-            media_chunks: [{
+            audio: {
               data: base64,
               mime_type: 'audio/pcm;rate=16000',
-            }],
+            },
           },
         }))
       }
@@ -406,7 +411,7 @@ export function useGeminiLive({ onEnd } = {}) {
   }, [disconnect])
 
   // ── 공개 API: speak (TTS)
-  const speak = useCallback((text, options = {}) => {
+  const speak = useCallback(async (text, options = {}) => {
     if (!text) return
     const { onEnd, rate = 1.0 } = options
 
@@ -421,9 +426,22 @@ export function useGeminiLive({ onEnd } = {}) {
     // onEnd 콜백 저장
     pendingOnEndRef.current = onEnd || null
 
-    // WebSocket이 안 열려있으면 onEnd 즉시 호출
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      console.warn('[Gemini] speak: WebSocket 미연결, onEnd 즉시 호출')
+    // WebSocket이 안 열려있으면 자동 연결
+    if (!isConnectedRef.current || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      console.log('[Gemini] speak: WebSocket 미연결, 자동 연결 시도')
+      try {
+        await connect()
+      } catch (e) {
+        console.error('[Gemini] speak: 자동 연결 실패', e)
+        pendingOnEndRef.current = null
+        onEnd?.()
+        return
+      }
+    }
+
+    // connect()가 setupComplete까지 대기하므로 isConnectedRef로 확인
+    if (!isConnectedRef.current || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      console.warn('[Gemini] speak: 연결 후에도 WebSocket 미연결, onEnd 즉시 호출')
       pendingOnEndRef.current = null
       onEnd?.()
       return
@@ -433,6 +451,7 @@ export function useGeminiLive({ onEnd } = {}) {
     isSpeakingModeRef.current = true
 
     // Gemini에게 텍스트를 말해달라고 요청
+    console.log('[Gemini] speak 전송:', text)
     wsRef.current.send(JSON.stringify({
       client_content: {
         turns: [{
@@ -444,7 +463,7 @@ export function useGeminiLive({ onEnd } = {}) {
     }))
 
     setIsSpeaking(true)
-  }, [getPlayback])
+  }, [getPlayback, connect])
 
   // ── 공개 API: cancel (재생 중지)
   const cancel = useCallback(() => {
